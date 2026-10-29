@@ -1,4 +1,4 @@
-name: Build BusyBox for Huawei E5770 (Dynamic Glibc + Patchelf)
+name: Build BusyBox for Huawei E5770 (Alpine Native Musl)
 
 on:
   workflow_dispatch:
@@ -14,122 +14,58 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install host dependencies (patchelf, wget, etc.)
+      - name: Build inside Alpine container (native musl)
         run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            build-essential file wget curl xz-utils ca-certificates \
-            patchelf
+          docker run --rm -v "$PWD:/src" -w /src alpine:3.20 sh -c '
+            set -eu
+            apk add --no-cache build-base linux-headers ncurses-dev perl bash
 
-      - name: Download Linaro GCC 4.9.4 ARM soft-float toolchain (glibc)
-        run: |
-          set -eu
-          TOOLCHAIN_URL="https://github.com/saqie1393/busybox/releases/download/1.0.0/gcc-linaro-4.9.4-2017.01-x86_64_arm-linux-gnueabi.tar.xz"
-          echo "Downloading: $TOOLCHAIN_URL"
-          curl -L --fail --show-error "$TOOLCHAIN_URL" -o /tmp/linaro-toolchain.tar.xz
-          echo "=== File type ==="
-          file /tmp/linaro-toolchain.tar.xz
-          sudo mkdir -p /opt/linaro-gcc
-          sudo tar -xJf /tmp/linaro-toolchain.tar.xz -C /opt/linaro-gcc --strip-components=1
-          echo "/opt/linaro-gcc/bin" >> "$GITHUB_PATH"
+            make distclean
+            cp configs/e5770_defconfig .config
 
-      - name: Verify toolchain
-        run: |
-          set -eu
-          echo "=== Compiler version ==="
-          /opt/linaro-gcc/bin/arm-linux-gnueabi-gcc --version | head -1
-          echo "=== Target triple ==="
-          /opt/linaro-gcc/bin/arm-linux-gnueabi-gcc -dumpmachine || true
-          echo "=== libc.so path (should be glibc) ==="
-          /opt/linaro-gcc/bin/arm-linux-gnueabi-gcc -print-file-name=libc.so || true
+            # CONFIG_STATIC=y rakhein (musl ke saath reliable)
+            if grep -q "^CONFIG_STATIC=" .config; then
+              sed -i "s/^CONFIG_STATIC=.*/CONFIG_STATIC=y/" .config
+            else
+              echo "CONFIG_STATIC=y" >> .config
+            fi
 
-      - name: Load and modify E5770 configuration (dynamic glibc)
-        run: |
-          set -eu
-          test -f configs/e5770_defconfig
-          make distclean
-          cp configs/e5770_defconfig .config
+            # Native compile: cross prefix khali
+            sed -i "s|^CONFIG_CROSS_COMPILER_PREFIX=.*|CONFIG_CROSS_COMPILER_PREFIX=\"\"|" .config
 
-          # CONFIG_STATIC ko explicitly disable karein
-          if grep -q '^CONFIG_STATIC=' .config; then
-            sed -i 's/^CONFIG_STATIC=.*/CONFIG_STATIC=n/' .config
-          elif grep -q '^# CONFIG_STATIC is not set' .config; then
-            sed -i 's/^# CONFIG_STATIC is not set/CONFIG_STATIC=n/' .config
-          else
-            echo 'CONFIG_STATIC=n' >> .config
-          fi
+            # ARMv7 CFLAGS (softfp rakhein)
+            sed -i "s|^CONFIG_EXTRA_CFLAGS=.*|CONFIG_EXTRA_CFLAGS=\"-march=armv7-a -mfloat-abi=softfp -mfpu=vfpv3-d16 -mthumb -O2\"|" .config
 
-          # Glibc toolchain prefix
-          sed -i 's|^CONFIG_CROSS_COMPILER_PREFIX=.*|CONFIG_CROSS_COMPILER_PREFIX="arm-linux-gnueabi-"|' .config
-          grep -q '^CONFIG_CROSS_COMPILER_PREFIX=' .config || \
-            echo 'CONFIG_CROSS_COMPILER_PREFIX="arm-linux-gnueabi-"' >> .config
+            # tc disable (CBQ headers missing)
+            sed -i "s/^CONFIG_TC=y/CONFIG_TC=n/" .config
 
-          # Huawei standard CFLAGS
-          sed -i 's|^CONFIG_EXTRA_CFLAGS=.*|CONFIG_EXTRA_CFLAGS="-march=armv7-a -mfloat-abi=softfp -mfpu=vfpv3-d16 -mthumb -O2"|' .config
+            yes "" | make oldconfig
 
-          # tc disable
-          sed -i 's/^CONFIG_TC=y/CONFIG_TC=n/' .config
-          grep -q '^CONFIG_TC=' .config || echo 'CONFIG_TC=n' >> .config
+            echo "=== Compiling ==="
+            make -j2
+            file busybox
+          '
 
-          yes "" | make oldconfig
-
-      - name: Debug config
-        run: |
-          echo "=== CONFIG_STATIC ==="
-          grep '^CONFIG_STATIC=' .config || echo "STATIC not explicitly set (dynamic default)"
-          echo "=== CONFIG_CROSS_COMPILER_PREFIX ==="
-          grep '^CONFIG_CROSS_COMPILER_PREFIX=' .config || echo "PREFIX not set"
-          echo "=== CONFIG_EXTRA_CFLAGS ==="
-          grep '^CONFIG_EXTRA_CFLAGS=' .config || echo "CFLAGS not set"
-          echo "=== CONFIG_TC ==="
-          grep '^CONFIG_TC=' .config || echo "TC disabled"
-          echo "=== CONFIG_EXTRA_LDLIBS ==="
-          grep '^CONFIG_EXTRA_LDLIBS=' .config || echo "LDLIBS not set"
-
-      - name: Compile BusyBox (dynamic glibc)
-        run: |
-          make -j2 \
-            ARCH=arm \
-            CROSS_COMPILE="arm-linux-gnueabi-"
-
-      - name: Verify binary and patch with patchelf
+      - name: Verify static binary
         run: |
           set -eu
           test -f busybox
           file busybox
+          readelf -l busybox | head -30
 
-          echo "=== Original INTERP ==="
-          /opt/linaro-gcc/bin/arm-linux-gnueabi-readelf -l busybox | grep -A1 INTERP || true
-
-          if ! /opt/linaro-gcc/bin/arm-linux-gnueabi-readelf -l busybox | grep -q INTERP; then
-            echo "ERROR: Binary is static, patchelf will fail. Expected dynamic."
-            echo "Aapke toolchain ki glibc dynamic libraries missing hain."
+          if readelf -l busybox | grep -q INTERP; then
+            echo "ERROR: Expected static binary, but interpreter found!"
             exit 1
           fi
-
-          # Patchelf se Huawei router ka interpreter path set karein
-          patchelf --set-interpreter /system/lib/glibc/ld-linux.so.3 busybox
-
-          echo "=== Patched INTERP ==="
-          readelf -l busybox | grep -A1 INTERP
-
-      - name: Create output and checksum
-        run: |
-          set -eu
-          file busybox
-          echo "=== Dynamic dependencies (expected glibc libs) ==="
-          /opt/linaro-gcc/bin/arm-linux-gnueabi-readelf -d busybox | grep NEEDED || true
+          echo "OK: Static binary confirmed."
 
           mkdir -p output
-          cp busybox output/busybox-e5770-armv7-dynamic
-          chmod 755 output/busybox-e5770-armv7-dynamic
-          ls -lh output/busybox-e5770-armv7-dynamic
-          sha256sum output/busybox-e5770-armv7-dynamic > output/SHA256SUMS.txt
+          cp busybox output/busybox-e5770-armv7-static
+          chmod 755 output/busybox-e5770-armv7-static
+          sha256sum output/busybox-e5770-armv7-static > output/SHA256SUMS.txt
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: busybox-e5770-armv7-dynamic
+          name: busybox-e5770-armv7-static
           path: output/
-          if-no-files-found: error
-          retention-days: 30
