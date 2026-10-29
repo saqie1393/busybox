@@ -27,11 +27,11 @@ jobs:
       - name: Download musl ARM cross toolchain
         run: |
           set -eu
-          # musl-cross-make prebuilt toolchain (arm-linux-musleabi)
-          TOOLCHAIN_URL="https://musl.cc/arm-linux-musleabi-cross.tgz"
-          wget -q "$TOOLCHAIN_URL" -O /tmp/musl-cross.tgz
+          # Bootlin toolchain use karein (musl, ARMv7 soft-float)
+          TOOLCHAIN_URL="https://toolchains.bootlin.com/downloads/releases/toolchains/armv7-eabi/tarballs/armv7-eabi--musl--stable-2025.08-1.tar.xz"
+          wget -q "$TOOLCHAIN_URL" -O /tmp/bootlin-toolchain.tar.xz
           sudo mkdir -p /opt/musl-cross
-          sudo tar -xzf /tmp/musl-cross.tgz -C /opt/musl-cross --strip-components=1
+          sudo tar -xJf /tmp/bootlin-toolchain.tar.xz -C /opt/musl-cross --strip-components=1
           echo "/opt/musl-cross/bin" >> "$GITHUB_PATH"
 
       - name: Verify toolchain
