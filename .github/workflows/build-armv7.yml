@@ -25,7 +25,7 @@ jobs:
         run: |
           set -eu
           # Linaro 4.9.4-2017.01 arm-linux-gnueabi (glibc) - Huawei modding standard
-          TOOLCHAIN_URL="https://releases.linaro.org/components/toolchain/binaries/4.9-2017.01/arm-linux-gnueabi/gcc-linaro-4.9.4-2017.01-x86_64_arm-linux-gnueabi.tar.xz"
+          TOOLCHAIN_URL="https://mirrors.cstcloud.cn/armbian-releases/_toolchain/gcc-linaro-4.9.4-2017.01-x86_64_arm-linux-gnueabihf.tar.xz"
           echo "Downloading: $TOOLCHAIN_URL"
           wget -q "$TOOLCHAIN_URL" -O /tmp/linaro-toolchain.tar.xz
           sudo mkdir -p /opt/linaro-gcc
