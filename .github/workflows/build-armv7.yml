@@ -48,6 +48,17 @@ jobs:
           sed -i 's/^# CONFIG_FEATURE_SH_STANDALONE is not set/CONFIG_FEATURE_SH_STANDALONE=y/' .config
           sed -i 's/^# CONFIG_FEATURE_PREFER_APPLETS is not set/CONFIG_FEATURE_PREFER_APPLETS=y/' .config
 
+          # BusyBox applet aur --list/--install features enable karein
+          sed -i 's/^# CONFIG_BUSYBOX is not set/CONFIG_BUSYBOX=y/' .config
+          grep -q '^CONFIG_BUSYBOX=' .config || echo 'CONFIG_BUSYBOX=y' >> .config
+
+          sed -i 's/^# CONFIG_FEATURE_SHOW_SCRIPT is not set/CONFIG_FEATURE_SHOW_SCRIPT=y/' .config
+          grep -q '^CONFIG_FEATURE_SHOW_SCRIPT=' .config || echo 'CONFIG_FEATURE_SHOW_SCRIPT=y' >> .config
+
+          # --install option ke liye installer feature
+          sed -i 's/^# CONFIG_FEATURE_INSTALLER is not set/CONFIG_FEATURE_INSTALLER=y/' .config
+          grep -q '^CONFIG_FEATURE_INSTALLER=' .config || echo 'CONFIG_FEATURE_INSTALLER=y' >> .config
+
           # Zaroori applets enable karein
           for opt in \
             CONFIG_ASH CONFIG_SH_IS_ASH CONFIG_ASH_BASH_COMPAT CONFIG_ASH_INTERNAL_GLOB \
@@ -88,7 +99,9 @@ jobs:
           # oldconfig se dependencies resolve karein
           yes "" | make oldconfig
 
-          # Debug: enabled applets count
+          # Debug: verify CONFIG_BUSYBOX enabled
+          echo "=== CONFIG_BUSYBOX ==="
+          grep '^CONFIG_BUSYBOX=' .config || echo "BUSYBOX applet not set!"
           echo "=== CONFIG_STATIC ==="
           grep '^CONFIG_STATIC=' .config || echo "STATIC not set"
           echo "=== Enabled applets (count) ==="
@@ -100,7 +113,7 @@ jobs:
             ARCH=arm \
             CROSS_COMPILE=arm-linux-gnueabi-
 
-      - name: Verify static binary and size
+      - name: Verify static binary and CONFIG_BUSYBOX
         run: |
           set -eu
           test -f busybox
@@ -114,6 +127,13 @@ jobs:
             exit 1
           fi
           echo "OK: Static binary confirmed."
+
+          # Quick test: busybox --list kaam karta hai?
+          if ./busybox --list >/dev/null 2>&1; then
+            echo "OK: CONFIG_BUSYBOX applet works (--list succeeded)."
+          else
+            echo "WARNING: --list failed. CONFIG_BUSYBOX might be disabled."
+          fi
 
           mkdir -p output
           cp busybox output/busybox-armv7-hi6932-minimal
