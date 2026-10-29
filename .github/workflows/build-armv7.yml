@@ -18,7 +18,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            build-essential file wget xz-utils ca-certificates \
+            build-essential file wget curl xz-utils ca-certificates \
             patchelf
 
       - name: Download Linaro GCC 4.9.4 ARM soft-float toolchain (glibc)
@@ -27,6 +27,7 @@ jobs:
           TOOLCHAIN_URL="https://github.com/saqie1393/busybox/releases/download/1.0.0/gcc-linaro-4.9.4-2017.01-x86_64_arm-linux-gnueabi.tar.xz"
           echo "Downloading: $TOOLCHAIN_URL"
           curl -L --fail --show-error "$TOOLCHAIN_URL" -o /tmp/linaro-toolchain.tar.xz
+          echo "=== File type ==="
           file /tmp/linaro-toolchain.tar.xz
           sudo mkdir -p /opt/linaro-gcc
           sudo tar -xJf /tmp/linaro-toolchain.tar.xz -C /opt/linaro-gcc --strip-components=1
@@ -49,9 +50,11 @@ jobs:
           make distclean
           cp configs/e5770_defconfig .config
 
-          # DYNAMIC OFF static (glibc ke saath dynamic hi reliable hai)
-          sed -i 's/^CONFIG_STATIC=.*/CONFIG_STATIC=n/' .config
-          grep -q '^CONFIG_STATIC=' .config || echo 'CONFIG_STATIC=n' >> .config
+          # Dynamic build (BusyBox default dynamic hai, CONFIG_STATIC nahi hona chahiye)
+          # Agar CONFIG_STATIC=y hai to n karein, warna kuch na karein
+          if grep -q '^CONFIG_STATIC=y' .config; then
+            sed -i 's/^CONFIG_STATIC=y/CONFIG_STATIC=n/' .config
+          fi
 
           # Glibc toolchain prefix
           sed -i 's|^CONFIG_CROSS_COMPILER_PREFIX=.*|CONFIG_CROSS_COMPILER_PREFIX="arm-linux-gnueabi-"|' .config
@@ -63,25 +66,24 @@ jobs:
           grep -q '^CONFIG_EXTRA_CFLAGS=' .config || \
             echo 'CONFIG_EXTRA_CFLAGS="-march=armv7-a -mfloat-abi=softfp -mfpu=vfpv3-d16 -mthumb -O2"' >> .config
 
-          # tc applet disable (CBQ headers issue)
+          # tc applet disable (CBQ kernel headers missing)
           sed -i 's/^CONFIG_TC=y/CONFIG_TC=n/' .config
           grep -q '^CONFIG_TC=' .config || echo 'CONFIG_TC=n' >> .config
-
-          # Dynamic build ke liye EXTRA_LDLIBS zaroori nahi, lekin safe side
-          sed -i 's|^CONFIG_EXTRA_LDLIBS=.*|CONFIG_EXTRA_LDLIBS=""|' .config
 
           yes "" | make oldconfig
 
       - name: Debug config
         run: |
           echo "=== CONFIG_STATIC ==="
-          grep '^CONFIG_STATIC=' .config
+          grep '^CONFIG_STATIC=' .config || echo "STATIC not explicitly set (dynamic default)"
           echo "=== CONFIG_CROSS_COMPILER_PREFIX ==="
-          grep '^CONFIG_CROSS_COMPILER_PREFIX=' .config
+          grep '^CONFIG_CROSS_COMPILER_PREFIX=' .config || echo "PREFIX not set"
           echo "=== CONFIG_EXTRA_CFLAGS ==="
-          grep '^CONFIG_EXTRA_CFLAGS=' .config
+          grep '^CONFIG_EXTRA_CFLAGS=' .config || echo "CFLAGS not set"
           echo "=== CONFIG_TC ==="
           grep '^CONFIG_TC=' .config || echo "TC disabled"
+          echo "=== CONFIG_EXTRA_LDLIBS ==="
+          grep '^CONFIG_EXTRA_LDLIBS=' .config || echo "LDLIBS not set"
 
       - name: Compile BusyBox (dynamic glibc)
         run: |
@@ -89,19 +91,18 @@ jobs:
             ARCH=arm \
             CROSS_COMPILE="arm-linux-gnueabi-"
 
-      - name: Verify dynamic binary and patch with patchelf
+      - name: Verify binary and patch with patchelf
         run: |
           set -eu
           test -f busybox
           file busybox
-          /opt/linaro-gcc/bin/arm-linux-gnueabi-readelf -h busybox | head -20
 
-          # Dynamic binary mein INTERP hona chahiye
           echo "=== Original INTERP ==="
           /opt/linaro-gcc/bin/arm-linux-gnueabi-readelf -l busybox | grep -A1 INTERP || true
 
           if ! /opt/linaro-gcc/bin/arm-linux-gnueabi-readelf -l busybox | grep -q INTERP; then
             echo "ERROR: Binary is static, patchelf will fail. Expected dynamic."
+            echo "Aapke toolchain ki glibc dynamic libraries missing hain."
             exit 1
           fi
 
