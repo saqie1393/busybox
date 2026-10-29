@@ -17,18 +17,14 @@ jobs:
       - name: Install host build tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
-            build-essential \
-            file \
-            wget \
-            xz-utils \
-            ca-certificates
+          sudo apt-get install -y build-essential file wget xz-utils ca-certificates
 
-      - name: Download musl ARM cross toolchain
+      - name: Download Bootlin musl ARMv7 toolchain
         run: |
           set -eu
-          # Bootlin toolchain use karein (musl, ARMv7 soft-float)
-          TOOLCHAIN_URL="https://toolchains.bootlin.com/downloads/releases/toolchains/armv7-eabi/tarballs/armv7-eabi--musl--stable-2025.08-1.tar.xz"
+          # Hard-float variant (eabihf) — router ke liye behtar
+          TOOLCHAIN_URL="https://toolchains.bootlin.com/downloads/releases/toolchains/armv7-eabihf/tarballs/armv7-eabihf--musl--stable-2025.08-1.tar.xz"
+          echo "Downloading: $TOOLCHAIN_URL"
           wget -q "$TOOLCHAIN_URL" -O /tmp/bootlin-toolchain.tar.xz
           sudo mkdir -p /opt/musl-cross
           sudo tar -xJf /tmp/bootlin-toolchain.tar.xz -C /opt/musl-cross --strip-components=1
@@ -37,9 +33,8 @@ jobs:
       - name: Verify toolchain
         run: |
           set -eu
-          which arm-linux-musleabi-gcc
-          arm-linux-musleabi-gcc --version
-          arm-linux-musleabi-gcc -print-sysroot
+          which arm-linux-gcc || ls /opt/musl-cross/bin/
+          arm-linux-gcc --version
 
       - name: Load Huawei E5770 configuration
         run: |
@@ -48,41 +43,38 @@ jobs:
           make distclean
           cp configs/e5770_defconfig .config
 
-          # Static ON rakhein (musl ke saath yeh theek chalega)
+          # Static ON
           sed -i 's/^CONFIG_STATIC=.*/CONFIG_STATIC=y/' .config
           grep -q '^CONFIG_STATIC=' .config || echo 'CONFIG_STATIC=y' >> .config
 
-          # Cross compiler prefix musl ke liye set karein
-          sed -i 's|^CONFIG_CROSS_COMPILER_PREFIX=.*|CONFIG_CROSS_COMPILER_PREFIX="arm-linux-musleabi-"|' .config
+          # Cross prefix Bootlin ke liye
+          sed -i 's|^CONFIG_CROSS_COMPILER_PREFIX=.*|CONFIG_CROSS_COMPILER_PREFIX="arm-linux-"|' .config
           grep -q '^CONFIG_CROSS_COMPILER_PREFIX=' .config || \
-            echo 'CONFIG_CROSS_COMPILER_PREFIX="arm-linux-musleabi-"' >> .config
+            echo 'CONFIG_CROSS_COMPILER_PREFIX="arm-linux-"' >> .config
+
+          # Soft-float flag hataayein (hard-float ke liye)
+          sed -i 's/ -mfloat-abi=softfp//g' .config
 
           yes "" | make oldconfig
 
       - name: Verify configuration
         run: |
-          grep -E \
-            '^(CONFIG_STATIC|CONFIG_AWK|CONFIG_IP|CONFIG_WGET|CONFIG_NC|CONFIG_NSLOOKUP|CONFIG_MODPROBE|CONFIG_MODINFO|CONFIG_DMESG|CONFIG_TIMEOUT)=' \
-            .config || true
-
+          grep -E '^(CONFIG_STATIC|CONFIG_CROSS_COMPILER_PREFIX)=' .config
           grep '^CONFIG_EXTRA_CFLAGS=' .config || true
-          grep '^CONFIG_CROSS_COMPILER_PREFIX=' .config
 
       - name: Compile BusyBox (static, musl)
         run: |
-          make -j2 \
-            ARCH=arm \
-            CROSS_COMPILE=arm-linux-musleabi-
+          make -j2 ARCH=arm CROSS_COMPILE=arm-linux-
 
       - name: Verify static binary
         run: |
           set -eu
           test -f busybox
           file busybox
-          arm-linux-musleabi-readelf -h busybox
-          arm-linux-musleabi-readelf -l busybox
+          arm-linux-readelf -h busybox
+          arm-linux-readelf -l busybox | head -20
 
-          if arm-linux-musleabi-readelf -l busybox | grep -q INTERP; then
+          if arm-linux-readelf -l busybox | grep -q INTERP; then
             echo "ERROR: Expected static binary, but interpreter was found"
             exit 1
           fi
@@ -92,8 +84,7 @@ jobs:
           cp busybox output/busybox-e5770-armv7-static
           chmod 755 output/busybox-e5770-armv7-static
           ls -lh output/busybox-e5770-armv7-static
-          sha256sum output/busybox-e5770-armv7-static \
-            > output/SHA256SUMS.txt
+          sha256sum output/busybox-e5770-armv7-static > output/SHA256SUMS.txt
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
