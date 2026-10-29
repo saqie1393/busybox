@@ -1,0 +1,86 @@
+
+name: Build BusyBox for HI6932 ARMv7 Router
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Compile Static ARMv7 BusyBox
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout BusyBox source
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            gcc-arm-linux-gnueabi \
+            binutils-arm-linux-gnueabi \
+            file
+
+      - name: Check source tree
+        run: |
+          test -f Makefile
+          test -f Config.in
+          make --version
+          arm-linux-gnueabi-gcc --version
+
+      - name: Clean previous configuration
+        run: |
+          make distclean
+
+      - name: Configure BusyBox
+        run: |
+          make defconfig
+
+          # Static linking
+          sed -i \
+            's/^# CONFIG_STATIC is not set/CONFIG_STATIC=y/' \
+            .config
+
+          # Install binary without stripping debug information
+          grep -E '^(CONFIG_STATIC|CONFIG_FEATURE_INSTALLER)=' .config || true
+
+      - name: Compile for ARMv7
+        run: |
+          make -j2 \
+            ARCH=arm \
+            CROSS_COMPILE=arm-linux-gnueabi- \
+            CFLAGS="-march=armv7-a"
+
+      - name: Verify architecture and static linking
+        run: |
+          set -eu
+
+          test -f busybox
+          file busybox
+
+          arm-linux-gnueabi-readelf -h busybox
+          arm-linux-gnueabi-readelf -l busybox
+
+          if arm-linux-gnueabi-readelf -l busybox | grep -q INTERP; then
+            echo "ERROR: Binary has a dynamic interpreter."
+            exit 1
+          fi
+
+          mkdir -p output
+          cp busybox output/busybox-armv7-hi6932
+          chmod 755 output/busybox-armv7-hi6932
+
+          sha256sum output/busybox-armv7-hi6932 \
+            > output/SHA256SUMS.txt
+
+      - name: Upload compiled BusyBox
+        uses: actions/upload-artifact@v4
+        with:
+          name: busybox-armv7-hi6932
+          path: output/
+          if-no-files-found: error
+          retention-days: 30
