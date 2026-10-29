@@ -52,16 +52,20 @@ jobs:
           sed -i 's/^CONFIG_STATIC=.*/CONFIG_STATIC=y/' .config
           grep -q '^CONFIG_STATIC=' .config || echo 'CONFIG_STATIC=y' >> .config
 
-          # Landley toolchain ka prefix
+          # Landley toolchain prefix
           sed -i 's|^CONFIG_CROSS_COMPILER_PREFIX=.*|CONFIG_CROSS_COMPILER_PREFIX="armv7l-linux-musleabihf-"|' .config
           grep -q '^CONFIG_CROSS_COMPILER_PREFIX=' .config || \
             echo 'CONFIG_CROSS_COMPILER_PREFIX="armv7l-linux-musleabihf-"' >> .config
 
-          # Softfp hataayein (hard-float toolchain)
+          # Softfp hataayein (hard-float)
           sed -i 's/ -mfloat-abi=softfp//g' .config
 
-          yes "" | make oldconfig
+          # tc applet disable karein (CBQ kernel headers missing)
+          sed -i 's/^CONFIG_TC=y/CONFIG_TC=n/' .config
+          grep -q '^CONFIG_TC=' .config || echo 'CONFIG_TC=n' >> .config
+          sed -i 's/^CONFIG_FEATURE_TC_INGRESS=y/CONFIG_FEATURE_TC_INGRESS=n/' .config
 
+          yes "" | make oldconfig
       - name: Debug config
         run: |
           grep '^CONFIG_STATIC=' .config
