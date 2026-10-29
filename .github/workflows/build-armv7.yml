@@ -1,4 +1,4 @@
-name: Build Full BusyBox for Huawei E5770 (Glibc + Patchelf)
+name: Build BusyBox for Huawei E5770 (Dynamic Glibc + Patchelf)
 
 on:
   workflow_dispatch:
@@ -24,7 +24,6 @@ jobs:
       - name: Download Linaro GCC 4.9.4 ARM soft-float toolchain (glibc)
         run: |
           set -eu
-          # Aapke GitHub release ka URL
           TOOLCHAIN_URL="https://github.com/saqie1393/busybox/releases/download/1.0.0/gcc-linaro-4.9.4-2017.01-x86_64_arm-linux-gnueabi.tar.xz"
           echo "Downloading: $TOOLCHAIN_URL"
           curl -L --fail --show-error "$TOOLCHAIN_URL" -o /tmp/linaro-toolchain.tar.xz
@@ -40,44 +39,36 @@ jobs:
           /opt/linaro-gcc/bin/arm-linux-gnueabi-gcc --version | head -1
           echo "=== Target triple ==="
           /opt/linaro-gcc/bin/arm-linux-gnueabi-gcc -dumpmachine || true
-          echo "=== libc.a path (should be glibc) ==="
-          /opt/linaro-gcc/bin/arm-linux-gnueabi-gcc -print-file-name=libc.a || true
+          echo "=== libc.so path (should be glibc) ==="
+          /opt/linaro-gcc/bin/arm-linux-gnueabi-gcc -print-file-name=libc.so || true
 
-      - name: Load and modify E5770 configuration (all applets + glibc)
+      - name: Load and modify E5770 configuration (dynamic glibc)
         run: |
           set -eu
           test -f configs/e5770_defconfig
           make distclean
           cp configs/e5770_defconfig .config
 
-          # Static ON (glibc ke saath, lekin trylink bug ke liye neeche fix hai)
-          sed -i 's/^CONFIG_STATIC=.*/CONFIG_STATIC=y/' .config
-          grep -q '^CONFIG_STATIC=' .config || echo 'CONFIG_STATIC=y' >> .config
+          # DYNAMIC OFF static (glibc ke saath dynamic hi reliable hai)
+          sed -i 's/^CONFIG_STATIC=.*/CONFIG_STATIC=n/' .config
+          grep -q '^CONFIG_STATIC=' .config || echo 'CONFIG_STATIC=n' >> .config
 
           # Glibc toolchain prefix
           sed -i 's|^CONFIG_CROSS_COMPILER_PREFIX=.*|CONFIG_CROSS_COMPILER_PREFIX="arm-linux-gnueabi-"|' .config
           grep -q '^CONFIG_CROSS_COMPILER_PREFIX=' .config || \
             echo 'CONFIG_CROSS_COMPILER_PREFIX="arm-linux-gnueabi-"' >> .config
 
-          # Huawei standard CFLAGS (softfp, vfpv3-d16) [citation:1][citation:18]
-          sed -i 's|^CONFIG_EXTRA_CFLAGS=.*|CONFIG_EXTRA_CFLAGS="-march=armv7-a -mfloat-abi=softfp -mfpu=vfpv3-d16 -mthumb -O2 -s"|' .config
+          # Huawei standard CFLAGS (softfp, vfpv3-d16)
+          sed -i 's|^CONFIG_EXTRA_CFLAGS=.*|CONFIG_EXTRA_CFLAGS="-march=armv7-a -mfloat-abi=softfp -mfpu=vfpv3-d16 -mthumb -O2"|' .config
           grep -q '^CONFIG_EXTRA_CFLAGS=' .config || \
-            echo 'CONFIG_EXTRA_CFLAGS="-march=armv7-a -mfloat-abi=softfp -mfpu=vfpv3-d16 -mthumb -O2 -s"' >> .config
+            echo 'CONFIG_EXTRA_CFLAGS="-march=armv7-a -mfloat-abi=softfp -mfpu=vfpv3-d16 -mthumb -O2"' >> .config
 
-          # tc applet disable (CBQ headers issue) - agar aapko tc chahiye to n hata dein, lekin headers missing hain
+          # tc applet disable (CBQ headers issue)
           sed -i 's/^CONFIG_TC=y/CONFIG_TC=n/' .config
           grep -q '^CONFIG_TC=' .config || echo 'CONFIG_TC=n' >> .config
 
-          # Glibc static linking ke liye libraries force karein
-          sed -i 's|^CONFIG_EXTRA_LDLIBS=.*|CONFIG_EXTRA_LDLIBS="crypt m resolv rt"|' .config
-          grep -q '^CONFIG_EXTRA_LDLIBS=' .config || echo 'CONFIG_EXTRA_LDLIBS="crypt m resolv rt"' >> .config
-
-          # trylink ko bypass karne ke liye ek hack: Makefile mein gc-sections issue
-          # Glibc ke saath --gc-sections ka masla hai, isliye use hata dein
-          # (trylink script khud handle karta hai lekin phir bhi fail hota hai)
-          # Hum manually Makefile edit karenge taake gc-sections na ho
-          sed -i 's/-Wl,--gc-sections//g' Makefile
-          sed -i 's/--gc-sections//g' scripts/trylink
+          # Dynamic build ke liye EXTRA_LDLIBS zaroori nahi, lekin safe side
+          sed -i 's|^CONFIG_EXTRA_LDLIBS=.*|CONFIG_EXTRA_LDLIBS=""|' .config
 
           yes "" | make oldconfig
 
@@ -89,49 +80,54 @@ jobs:
           grep '^CONFIG_CROSS_COMPILER_PREFIX=' .config
           echo "=== CONFIG_EXTRA_CFLAGS ==="
           grep '^CONFIG_EXTRA_CFLAGS=' .config
-          echo "=== CONFIG_EXTRA_LDLIBS ==="
-          grep '^CONFIG_EXTRA_LDLIBS=' .config
           echo "=== CONFIG_TC ==="
           grep '^CONFIG_TC=' .config || echo "TC disabled"
 
-      - name: Compile BusyBox (glibc, static)
+      - name: Compile BusyBox (dynamic glibc)
         run: |
           make -j2 \
             ARCH=arm \
             CROSS_COMPILE="arm-linux-gnueabi-"
 
-      - name: Patch binary with patchelf for Huawei router
+      - name: Verify dynamic binary and patch with patchelf
         run: |
           set -eu
           test -f busybox
           file busybox
+          /opt/linaro-gcc/bin/arm-linux-gnueabi-readelf -h busybox | head -20
 
-          # Patchelf se interpreter path set karein (Huawei standard) [citation:1][citation:2]
+          # Dynamic binary mein INTERP hona chahiye
+          echo "=== Original INTERP ==="
+          /opt/linaro-gcc/bin/arm-linux-gnueabi-readelf -l busybox | grep -A1 INTERP || true
+
+          if ! /opt/linaro-gcc/bin/arm-linux-gnueabi-readelf -l busybox | grep -q INTERP; then
+            echo "ERROR: Binary is static, patchelf will fail. Expected dynamic."
+            exit 1
+          fi
+
+          # Patchelf se Huawei router ka interpreter path set karein
           patchelf --set-interpreter /system/lib/glibc/ld-linux.so.3 busybox
 
-          echo "=== Patched interpreter ==="
-          readelf -l busybox | grep -A1 INTERP || echo "No INTERP (static?)"
+          echo "=== Patched INTERP ==="
+          readelf -l busybox | grep -A1 INTERP
 
-      - name: Verify binary and create output
+      - name: Create output and checksum
         run: |
           set -eu
           file busybox
-          /opt/linaro-gcc/bin/arm-linux-gnueabi-readelf -h busybox | head -20
-
-          # Agar INTERP hai to patchelf ne set kiya hai
-          echo "=== Dynamic dependencies (expected for glibc) ==="
+          echo "=== Dynamic dependencies (expected glibc libs) ==="
           /opt/linaro-gcc/bin/arm-linux-gnueabi-readelf -d busybox | grep NEEDED || true
 
           mkdir -p output
-          cp busybox output/busybox-e5770-armv7-full
-          chmod 755 output/busybox-e5770-armv7-full
-          ls -lh output/busybox-e5770-armv7-full
-          sha256sum output/busybox-e5770-armv7-full > output/SHA256SUMS.txt
+          cp busybox output/busybox-e5770-armv7-dynamic
+          chmod 755 output/busybox-e5770-armv7-dynamic
+          ls -lh output/busybox-e5770-armv7-dynamic
+          sha256sum output/busybox-e5770-armv7-dynamic > output/SHA256SUMS.txt
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: busybox-e5770-armv7-full
+          name: busybox-e5770-armv7-dynamic
           path: output/
           if-no-files-found: error
           retention-days: 30
