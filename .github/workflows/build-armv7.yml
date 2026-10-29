@@ -19,33 +19,27 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential file wget xz-utils ca-certificates
 
-      - name: Download Bootlin armv7-eabihf musl toolchain
+      - name: Download Landley ARMv7 musl toolchain
         run: |
           set -eu
-          TOOLCHAIN_URL="https://toolchains.bootlin.com/downloads/releases/toolchains/armv7-eabihf/tarballs/armv7-eabihf--musl--stable-2025.08-1.tar.xz"
+          TOOLCHAIN_URL="https://landley.net/bin/toolchains/latest/armv7l-linux-musleabihf-cross.tar.xz"
           echo "Downloading: $TOOLCHAIN_URL"
-          wget -q "$TOOLCHAIN_URL" -O /tmp/bootlin-toolchain.tar.xz
+          wget -q "$TOOLCHAIN_URL" -O /tmp/landley-toolchain.tar.xz
           sudo mkdir -p /opt/musl-cross
-          sudo tar -xJf /tmp/bootlin-toolchain.tar.xz -C /opt/musl-cross --strip-components=1
+          sudo tar -xJf /tmp/landley-toolchain.tar.xz -C /opt/musl-cross --strip-components=1
           echo "/opt/musl-cross/bin" >> "$GITHUB_PATH"
 
-      - name: Verify toolchain is musl (NOT glibc)
+      - name: Verify toolchain
         run: |
           set -eu
-          echo "=== Toolchain bin directory ==="
-          ls /opt/musl-cross/bin/ | head -20
-
-          echo "=== Compiler version ==="
-          /opt/musl-cross/bin/arm-linux-gcc --version || true
-
-          echo "=== Target triple ==="
-          /opt/musl-cross/bin/arm-linux-gcc -dumpmachine || true
-
-          echo "=== libc.a path (should be musl, not glibc) ==="
-          /opt/musl-cross/bin/arm-linux-gcc -print-file-name=libc.a || true
-
-          echo "=== Check if musl-gcc exists ==="
-          ls -la /opt/musl-cross/bin/*musl* 2>/dev/null || echo "No musl-specific wrapper found"
+          echo "=== Bin dir ==="
+          ls /opt/musl-cross/bin/ | head -10
+          echo "=== Compiler ==="
+          /opt/musl-cross/bin/armv7l-linux-musleabihf-gcc --version || true
+          echo "=== Target ==="
+          /opt/musl-cross/bin/armv7l-linux-musleabihf-gcc -dumpmachine || true
+          echo "=== libc.a ==="
+          /opt/musl-cross/bin/armv7l-linux-musleabihf-gcc -print-file-name=libc.a || true
 
       - name: Load Huawei E5770 configuration
         run: |
@@ -58,48 +52,40 @@ jobs:
           sed -i 's/^CONFIG_STATIC=.*/CONFIG_STATIC=y/' .config
           grep -q '^CONFIG_STATIC=' .config || echo 'CONFIG_STATIC=y' >> .config
 
-          # Cross prefix: Bootlin ka default prefix arm-linux- hai
-          sed -i 's|^CONFIG_CROSS_COMPILER_PREFIX=.*|CONFIG_CROSS_COMPILER_PREFIX="arm-linux-"|' .config
+          # Landley toolchain ka prefix
+          sed -i 's|^CONFIG_CROSS_COMPILER_PREFIX=.*|CONFIG_CROSS_COMPILER_PREFIX="armv7l-linux-musleabihf-"|' .config
           grep -q '^CONFIG_CROSS_COMPILER_PREFIX=' .config || \
-            echo 'CONFIG_CROSS_COMPILER_PREFIX="arm-linux-"' >> .config
+            echo 'CONFIG_CROSS_COMPILER_PREFIX="armv7l-linux-musleabihf-"' >> .config
 
-          # Softfp hataayein (hard-float toolchain ke liye)
+          # Softfp hataayein (hard-float toolchain)
           sed -i 's/ -mfloat-abi=softfp//g' .config
 
           yes "" | make oldconfig
 
-      - name: Debug - Show final config
+      - name: Debug config
         run: |
-          echo "=== CONFIG_STATIC ==="
-          grep '^CONFIG_STATIC=' .config || echo "NOT SET"
-          echo "=== CONFIG_CROSS_COMPILER_PREFIX ==="
-          grep '^CONFIG_CROSS_COMPILER_PREFIX=' .config || echo "NOT SET"
-          echo "=== CONFIG_EXTRA_CFLAGS ==="
-          grep '^CONFIG_EXTRA_CFLAGS=' .config || echo "NOT SET"
+          grep '^CONFIG_STATIC=' .config
+          grep '^CONFIG_CROSS_COMPILER_PREFIX=' .config
+          grep '^CONFIG_EXTRA_CFLAGS=' .config
 
-      - name: Compile BusyBox with explicit musl CC
+      - name: Compile BusyBox
         run: |
-          set -eu
-          # Force musl compiler path explicitly
           make -j2 \
             ARCH=arm \
-            CROSS_COMPILE="/opt/musl-cross/bin/arm-linux-" \
-            CC="/opt/musl-cross/bin/arm-linux-gcc" \
-            HOSTCC="gcc"
+            CROSS_COMPILE="armv7l-linux-musleabihf-"
 
       - name: Verify static binary
         run: |
           set -eu
           test -f busybox
           file busybox
-          /opt/musl-cross/bin/arm-linux-readelf -h busybox | head -20
-          /opt/musl-cross/bin/arm-linux-readelf -l busybox | head -30
+          /opt/musl-cross/bin/armv7l-linux-musleabihf-readelf -l busybox | head -30
 
-          if /opt/musl-cross/bin/arm-linux-readelf -l busybox | grep -q INTERP; then
+          if /opt/musl-cross/bin/armv7l-linux-musleabihf-readelf -l busybox | grep -q INTERP; then
             echo "ERROR: Expected static binary, but interpreter found!"
             exit 1
           fi
-          echo "OK: Static binary confirmed (no INTERP)."
+          echo "OK: Static binary confirmed."
 
           mkdir -p output
           cp busybox output/busybox-e5770-armv7-static
