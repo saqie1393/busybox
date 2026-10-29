@@ -21,13 +21,14 @@ jobs:
             build-essential file wget xz-utils ca-certificates \
             patchelf
 
-      - name: Download Linaro GCC 4.9.4 ARM toolchain (glibc)
+      - name: Download Linaro GCC 4.9.4 ARM soft-float toolchain (glibc)
         run: |
           set -eu
-          # Linaro 4.9.4-2017.01 arm-linux-gnueabi (glibc) - Huawei modding standard
-          TOOLCHAIN_URL="https://mirrors.cstcloud.cn/armbian-releases/_toolchain/gcc-linaro-4.9.4-2017.01-x86_64_arm-linux-gnueabihf.tar.xz"
+          # Aapke GitHub release ka URL
+          TOOLCHAIN_URL="https://github.com/saqie1393/busybox/releases/download/1.0.0/gcc-linaro-4.9.4-2017.01-x86_64_arm-linux-gnueabi.tar.xz"
           echo "Downloading: $TOOLCHAIN_URL"
-          wget -q "$TOOLCHAIN_URL" -O /tmp/linaro-toolchain.tar.xz
+          curl -L --fail --show-error "$TOOLCHAIN_URL" -o /tmp/linaro-toolchain.tar.xz
+          file /tmp/linaro-toolchain.tar.xz
           sudo mkdir -p /opt/linaro-gcc
           sudo tar -xJf /tmp/linaro-toolchain.tar.xz -C /opt/linaro-gcc --strip-components=1
           echo "/opt/linaro-gcc/bin" >> "$GITHUB_PATH"
