@@ -50,10 +50,13 @@ jobs:
           make distclean
           cp configs/e5770_defconfig .config
 
-          # Dynamic build (BusyBox default dynamic hai, CONFIG_STATIC nahi hona chahiye)
-          # Agar CONFIG_STATIC=y hai to n karein, warna kuch na karein
-          if grep -q '^CONFIG_STATIC=y' .config; then
-            sed -i 's/^CONFIG_STATIC=y/CONFIG_STATIC=n/' .config
+          # CONFIG_STATIC ko explicitly disable karein
+          if grep -q '^CONFIG_STATIC=' .config; then
+            sed -i 's/^CONFIG_STATIC=.*/CONFIG_STATIC=n/' .config
+          elif grep -q '^# CONFIG_STATIC is not set' .config; then
+            sed -i 's/^# CONFIG_STATIC is not set/CONFIG_STATIC=n/' .config
+          else
+            echo 'CONFIG_STATIC=n' >> .config
           fi
 
           # Glibc toolchain prefix
@@ -61,12 +64,10 @@ jobs:
           grep -q '^CONFIG_CROSS_COMPILER_PREFIX=' .config || \
             echo 'CONFIG_CROSS_COMPILER_PREFIX="arm-linux-gnueabi-"' >> .config
 
-          # Huawei standard CFLAGS (softfp, vfpv3-d16)
+          # Huawei standard CFLAGS
           sed -i 's|^CONFIG_EXTRA_CFLAGS=.*|CONFIG_EXTRA_CFLAGS="-march=armv7-a -mfloat-abi=softfp -mfpu=vfpv3-d16 -mthumb -O2"|' .config
-          grep -q '^CONFIG_EXTRA_CFLAGS=' .config || \
-            echo 'CONFIG_EXTRA_CFLAGS="-march=armv7-a -mfloat-abi=softfp -mfpu=vfpv3-d16 -mthumb -O2"' >> .config
 
-          # tc applet disable (CBQ kernel headers missing)
+          # tc disable
           sed -i 's/^CONFIG_TC=y/CONFIG_TC=n/' .config
           grep -q '^CONFIG_TC=' .config || echo 'CONFIG_TC=n' >> .config
 
