@@ -1,5 +1,5 @@
 
-name: Build BusyBox for HI6932 ARMv7 Router
+name: Build BusyBox 1.34.1 for Huawei Router
 
 on:
   workflow_dispatch:
@@ -9,14 +9,13 @@ permissions:
 
 jobs:
   build:
-    name: Compile Static ARMv7 BusyBox
     runs-on: ubuntu-22.04
 
     steps:
-      - name: Checkout BusyBox source
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install build dependencies
+      - name: Install ARM toolchain
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -25,62 +24,53 @@ jobs:
             binutils-arm-linux-gnueabi \
             file
 
-      - name: Check source tree
+      - name: Load Huawei E5770 configuration
         run: |
-          test -f Makefile
-          test -f Config.in
-          make --version
-          arm-linux-gnueabi-gcc --version
-
-      - name: Clean previous configuration
-        run: |
+          set -eu
+          test -f configs/e5770_defconfig
           make distclean
+          cp configs/e5770_defconfig .config
+          yes "" | make oldconfig
 
-      - name: Configure BusyBox
+      - name: Verify configuration
         run: |
-          make defconfig
+          grep -E \
+            '^(CONFIG_STATIC|CONFIG_AWK|CONFIG_IP|CONFIG_WGET|CONFIG_NC|CONFIG_NSLOOKUP|CONFIG_MODPROBE|CONFIG_MODINFO|CONFIG_DMESG|CONFIG_TIMEOUT)=' \
+            .config || true
 
-          # Static linking
-          sed -i \
-            's/^# CONFIG_STATIC is not set/CONFIG_STATIC=y/' \
-            .config
+          grep '^CONFIG_EXTRA_CFLAGS=' .config
+          grep '^CONFIG_CROSS_COMPILER_PREFIX=' .config
 
-          # Install binary without stripping debug information
-          grep -E '^(CONFIG_STATIC|CONFIG_FEATURE_INSTALLER)=' .config || true
-
-      - name: Compile for ARMv7
+      - name: Compile BusyBox
         run: |
           make -j2 \
             ARCH=arm \
-            CROSS_COMPILE=arm-linux-gnueabi- \
-            CFLAGS="-march=armv7-a"
+            CROSS_COMPILE=arm-linux-gnueabi-
 
-      - name: Verify architecture and static linking
+      - name: Verify binary
         run: |
           set -eu
-
           test -f busybox
           file busybox
-
           arm-linux-gnueabi-readelf -h busybox
           arm-linux-gnueabi-readelf -l busybox
 
           if arm-linux-gnueabi-readelf -l busybox | grep -q INTERP; then
-            echo "ERROR: Binary has a dynamic interpreter."
+            echo "ERROR: Expected static binary, but interpreter was found"
             exit 1
           fi
 
           mkdir -p output
-          cp busybox output/busybox-armv7-hi6932
-          chmod 755 output/busybox-armv7-hi6932
-
-          sha256sum output/busybox-armv7-hi6932 \
+          cp busybox output/busybox-e5770-armv7
+          chmod 755 output/busybox-e5770-armv7
+          ls -lh output/busybox-e5770-armv7
+          sha256sum output/busybox-e5770-armv7 \
             > output/SHA256SUMS.txt
 
-      - name: Upload compiled BusyBox
+      - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: busybox-armv7-hi6932
+          name: busybox-e5770-armv7
           path: output/
           if-no-files-found: error
           retention-days: 30
