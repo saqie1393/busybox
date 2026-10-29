@@ -65,12 +65,25 @@ jobs:
           grep -q '^CONFIG_TC=' .config || echo 'CONFIG_TC=n' >> .config
           sed -i 's/^CONFIG_FEATURE_TC_INGRESS=y/CONFIG_FEATURE_TC_INGRESS=n/' .config
 
+          # SOLUTION 1: trylink ko libraries force karein taake drop na kare
+          # musl mein crypt built-in hai, isliye sirf "m rt" force kar rahe hain
+          sed -i 's|^CONFIG_EXTRA_LDLIBS=.*|CONFIG_EXTRA_LDLIBS="m rt"|' .config
+          grep -q '^CONFIG_EXTRA_LDLIBS=' .config || echo 'CONFIG_EXTRA_LDLIBS="m rt"' >> .config
+
           yes "" | make oldconfig
+
       - name: Debug config
         run: |
-          grep '^CONFIG_STATIC=' .config
-          grep '^CONFIG_CROSS_COMPILER_PREFIX=' .config
-          grep '^CONFIG_EXTRA_CFLAGS=' .config
+          echo "=== CONFIG_STATIC ==="
+          grep '^CONFIG_STATIC=' .config || echo "NOT SET"
+          echo "=== CONFIG_CROSS_COMPILER_PREFIX ==="
+          grep '^CONFIG_CROSS_COMPILER_PREFIX=' .config || echo "NOT SET"
+          echo "=== CONFIG_EXTRA_CFLAGS ==="
+          grep '^CONFIG_EXTRA_CFLAGS=' .config || echo "NOT SET"
+          echo "=== CONFIG_EXTRA_LDLIBS ==="
+          grep '^CONFIG_EXTRA_LDLIBS=' .config || echo "NOT SET"
+          echo "=== CONFIG_TC ==="
+          grep '^CONFIG_TC=' .config || echo "NOT SET"
 
       - name: Compile BusyBox
         run: |
@@ -83,13 +96,14 @@ jobs:
           set -eu
           test -f busybox
           file busybox
+          /opt/musl-cross/bin/armv7l-linux-musleabihf-readelf -h busybox | head -20
           /opt/musl-cross/bin/armv7l-linux-musleabihf-readelf -l busybox | head -30
 
           if /opt/musl-cross/bin/armv7l-linux-musleabihf-readelf -l busybox | grep -q INTERP; then
             echo "ERROR: Expected static binary, but interpreter found!"
             exit 1
           fi
-          echo "OK: Static binary confirmed."
+          echo "OK: Static binary confirmed (no INTERP)."
 
           mkdir -p output
           cp busybox output/busybox-e5770-armv7-static
